@@ -1,0 +1,14 @@
+/vendor/
+/web/node_modules/
+/storage/
+/.env
+/dist/
+/public/assets/
+/public/index.html
+/public/sw.js
+/public/manifest.webmanifest
+/public/icons/
+/public/vendor/
+.phpunit.result.cache
+.phpunit.cache/
+*.log

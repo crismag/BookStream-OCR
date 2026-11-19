@@ -1,0 +1,7 @@
+{
+    "name": "crismag/bookstream-ocr",
+    "type": "project",
+    "require-dev": {
+        "phpunit/phpunit": "^11"
+    }
+}
