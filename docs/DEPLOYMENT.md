@@ -9,7 +9,39 @@ No shell, Node, Composer or background workers are needed on the server.
 - HTTPS (hPanel → **Security → SSL**). The camera only works on HTTPS.
 - PHP limits (hPanel → **Advanced → PHP Configuration → PHP Options**): `upload_max_filesize` ≥ 20M, `post_max_size` ≥ 24M, `memory_limit` ≥ 512M, `max_execution_time` ≥ 120. `.htaccess` also requests these.
 
-## 1. Build the package
+## Option A — Git deploy with build (hPanel → Websites → Git / build settings)
+
+Recommended: every push to `main` redeploys automatically.
+
+| Setting | Value |
+|---|---|
+| Framework preset | Vite |
+| Node version | 22.x |
+| Root directory | `web` |
+| Build command | `npm run build` |
+| Package manager | npm |
+| Output directory | `dist` |
+
+`web/dist` is a complete web root: the app, `.htaccess`, the PHP entry point `index.php` and the PHP code in `_bookstream/` (blocked from the web by `.htaccess`).
+
+Private data is **not** part of the deploy. On the first request `index.php` creates `domains/<domain>/bookstream/` **next to** `public_html` and keeps there:
+
+- `.env` — your settings (you create it once, see below)
+- `storage/` — scans, the SQLite database (default) and logs
+
+Redeploys replace `public_html` only, so scans and text survive every deploy.
+
+**One-time setup after the first successful deploy:**
+
+1. Open `https://<domain>/api/health` → should show `{"ok":true,...}`. This also creates `domains/<domain>/bookstream/`.
+2. In File Manager, open `domains/<domain>/bookstream/` and create a file named `.env` containing one line:
+   `SETUP_TOKEN=<a long random string>`
+   (SQLite is used automatically. For MySQL add the `DB_*` lines from `.env.example`.)
+3. Open `https://<domain>/` on the phone, enter the token, create your account, then delete the `SETUP_TOKEN` line.
+
+## Option B — Upload a zip manually
+
+### 1. Build the package
 
 On your computer (or download the `bookstream-deploy` artifact from the GitHub Actions run):
 

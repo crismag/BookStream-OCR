@@ -45,7 +45,7 @@ Not yet run: MySQL backend (schema is portable; CI uses SQLite), real S24 camera
 
 ## Deployment status
 
-Not deployed. Package builds (`dist/bookstream-deploy.zip`). Hostinger credentials and domain/subdomain are not configured in this repo.
+Hostinger Git build deploy configured by the owner for `bookstream.crishub.com` (root `web`, output `dist`). The first build failed because the build wrote to `../public` only; fixed: `npm run build` now also assembles `web/dist` (SPA + `index.php` + `_bookstream/app`). Private data lives in `domains/<domain>/bookstream/` outside the web root and survives redeploys (verified in a simulated layout: e2e 19/19, data intact after replacing the web root). Manual zip deploy (`scripts/package.sh`) still works.
 
 ## External blockers
 

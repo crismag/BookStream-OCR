@@ -9,6 +9,8 @@ DirectoryIndex index.html
   RewriteCond %{HTTP:X-Forwarded-Proto} !https
   RewriteCond %{HTTP_HOST} !^(localhost|127\.0\.0\.1)
   RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+  # Bundled PHP code is never web-accessible
+  RewriteRule ^_bookstream(/|$) - [F,L]
   # API -> PHP front controller
   RewriteRule ^api/ index.php [QSA,L]
   # SPA fallback

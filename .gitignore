@@ -13,3 +13,4 @@
 .phpunit.cache/
 *.log
 /dist/
+/web/dist/

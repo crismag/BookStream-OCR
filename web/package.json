@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build && node scripts/copy-ocr-assets.mjs",
+    "build": "tsc --noEmit && vite build && node scripts/copy-ocr-assets.mjs && node scripts/assemble-dist.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

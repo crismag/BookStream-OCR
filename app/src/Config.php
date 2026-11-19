@@ -56,7 +56,8 @@ final class Config
 
     public function storageDir(): string
     {
-        $dir = $this->get('STORAGE_DIR', dirname(BOOKSTREAM_APP_DIR) . '/storage');
+        $home = defined('BOOKSTREAM_HOME') ? (string)constant('BOOKSTREAM_HOME') : dirname(BOOKSTREAM_APP_DIR);
+        $dir = $this->get('STORAGE_DIR', $home . '/storage');
         return rtrim((string)$dir, '/');
     }
 }
