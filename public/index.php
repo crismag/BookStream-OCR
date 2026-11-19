@@ -2,11 +2,12 @@
 declare(strict_types=1);
 
 // Front controller for /api/*. Application code and storage live OUTSIDE the web root.
-// Searched locations (first match wins): $BOOKSTREAM_HOME/app, ../app, ../bookstream/app
+// Searched locations (first match wins): $BOOKSTREAM_HOME/app, ../app, ../bookstream/app, ../../bookstream/app
 $candidates = array_filter([
     getenv('BOOKSTREAM_HOME') ? rtrim((string)getenv('BOOKSTREAM_HOME'), '/') . '/app' : null,
     dirname(__DIR__) . '/app',
     dirname(__DIR__) . '/bookstream/app',
+    dirname(__DIR__, 2) . '/bookstream/app', // subdomain inside public_html/<sub>/
 ]);
 $appDir = null;
 foreach ($candidates as $c) {

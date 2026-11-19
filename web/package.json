@@ -1,22 +1,23 @@
 {
-  "name": "web",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "bookstream-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build && node scripts/copy-ocr-assets.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "dependencies": {
+    "@tesseract.js-data/eng": "^1.0.0",
+    "tesseract.js": "^5.1.1"
+  },
   "devDependencies": {
     "fake-indexeddb": "^6.2.8",
     "jsdom": "^31.0.1",
     "typescript": "^7.0.2",
     "vite": "^6.4.6",
     "vitest": "^5.1.1"
-  },
-  "dependencies": {
-    "tesseract.js": "^5.1.1"
   }
 }

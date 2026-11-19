@@ -432,7 +432,7 @@ final class PageController
             ],
             'book' => ['id' => $book['id'], 'title' => $book['title'], 'original_language' => $book['original_language'], 'translation_language' => $book['translation_language'], 'default_layout' => $book['default_layout']],
             'regions' => $regions,
-            'ocr_versions' => $app->db->all('SELECT o.region_id, o.version, o.engine, o.engine_version, o.confidence, o.created_at FROM ocr_results o JOIN regions r ON r.id = o.region_id WHERE r.page_id = ? ORDER BY o.version DESC', [$page['id']]),
+            'ocr_versions' => $app->db->all('SELECT o.region_id, o.version, o.engine, o.engine_version, o.confidence, o.recognized_text AS text, o.created_at FROM ocr_results o JOIN regions r ON r.id = o.region_id WHERE r.page_id = ? ORDER BY o.version DESC', [$page['id']]),
         ];
     }
 }
