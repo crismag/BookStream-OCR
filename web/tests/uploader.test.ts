@@ -126,6 +126,33 @@ describe('Uploader', () => {
     expect(new Set(seen).size).toBe(4);
   });
 
+  it('drops to one slot after network failure and recovers after 3 successes', async () => {
+    let fail = true;
+    const up = new Uploader(queue, async (p) => {
+      if (fail) { fail = false; throw new ApiError(0, 'network', 'timeout'); }
+      return ackFor(p);
+    }, {}, { baseDelayMs: 1, maxDelayMs: 1, now });
+    expect(up.effective).toBe(2);
+    for (let i = 1; i <= 5; i++) await queue.put(item(i));
+    await up.tick();
+    expect(up.effective).toBe(1);
+    clock += 10;
+    for (let i = 0; i < 3; i++) await up.tick();
+    expect(up.effective).toBe(2);
+  });
+
+  it('status reads do not load image bytes; images survive until confirmed', async () => {
+    const p = item(1);
+    await queue.put(p);
+    const meta = (await queue.all())[0] as any;
+    expect(meta.blob).toBeUndefined();
+    expect((await queue.get(p.captureId))?.blob).toBeDefined(); // fake IDB clones Blob shape; real browsers keep bytes
+    expect(await queue.bytes()).toBe(5);
+    // a fresh queue instance (page reload) sees the same item
+    const again = new CaptureQueue((queue as any).factory);
+    expect((await again.all()).map((i) => i.captureId)).toEqual([p.captureId]);
+  });
+
   it('handles 30 consecutive captures', async () => {
     const up = new Uploader(queue, async (p) => ackFor(p), {}, { baseDelayMs: 1000, maxDelayMs: 8000, now });
     for (let i = 1; i <= 30; i++) await queue.put(item(i));
