@@ -1,40 +1,50 @@
 /**
- * Rear-camera capture. On Android Chrome / Samsung Internet (Galaxy S24) the
- * ImageCapture API returns full-resolution stills; elsewhere we grab the video frame.
- * Only capabilities the browser actually reports are offered in the UI.
+ * Rear-camera access with three separate resolutions:
+ *   1. preview  — a modest 4:3 video stream (default long edge 1920) for a light, page-shaped viewfinder
+ *   2. still    — what the camera captures: a frame from the preview when that is already large
+ *                 enough for the target, otherwise ImageCapture.takePhoto() at the smallest supported
+ *                 width ≥ target (or the sensor maximum for "Maximum")
+ *   3. saved    — the stored image, produced by the processing worker (downsampled, never upscaled)
+ * Only capabilities the browser actually reports are offered.
  */
 declare class ImageCapture {
   constructor(track: MediaStreamTrack);
   takePhoto(settings?: Record<string, unknown>): Promise<Blob>;
-  getPhotoCapabilities(): Promise<{ imageWidth?: { max: number }; imageHeight?: { max: number }; fillLightMode?: string[] }>;
+  getPhotoCapabilities(): Promise<{ imageWidth?: { min: number; max: number; step: number }; imageHeight?: { min: number; max: number; step: number } }>;
 }
 
 export interface CameraCaps {
   torch: boolean;
-  fullResStill: boolean;
+  stills: boolean;
+  stillWidth: { min: number; max: number; step: number } | null;
   pointFocus: boolean;
+  manualFocus: { min: number; max: number; step: number } | null;
   zoom: { min: number; max: number; step: number } | null;
-  stillMaxWidth: number | null;
   videoWidth: number;
   videoHeight: number;
 }
+
+export type Acquired =
+  | { kind: 'bitmap'; bitmap: ImageBitmap; width: number; height: number; method: 'frame' }
+  | { kind: 'blob'; blob: Blob; method: 'still'; requestedWidth: number | null };
 
 export class Camera {
   stream: MediaStream | null = null;
   track: MediaStreamTrack | null = null;
   private imageCapture: ImageCapture | null = null;
   private torchOn = false;
-  caps: CameraCaps = { torch: false, fullResStill: false, pointFocus: false, zoom: null, stillMaxWidth: null, videoWidth: 0, videoHeight: 0 };
+  caps: CameraCaps = { torch: false, stills: false, stillWidth: null, pointFocus: false, manualFocus: null, zoom: null, videoWidth: 0, videoHeight: 0 };
 
   static supported(): boolean {
     return !!navigator.mediaDevices?.getUserMedia;
   }
 
-  async start(video: HTMLVideoElement): Promise<CameraCaps> {
+  async start(video: HTMLVideoElement, previewLongEdge = 1920): Promise<CameraCaps> {
     this.stop();
+    const long = previewLongEdge, short = Math.round(previewLongEdge * 3 / 4);
     const attempts: MediaStreamConstraints[] = [
-      { audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } } },
-      { audio: false, video: { facingMode: { ideal: 'environment' } } },
+      { audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: long }, height: { ideal: short }, aspectRatio: { ideal: 4 / 3 } } },
+      { audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: long } } },
       { audio: false, video: true },
     ];
     let lastErr: unknown = null;
@@ -58,10 +68,11 @@ export class Camera {
     const tc: any = this.track && typeof this.track.getCapabilities === 'function' ? this.track.getCapabilities() : {};
     this.caps = {
       torch: !!tc.torch,
-      fullResStill: false,
+      stills: false,
+      stillWidth: null,
       pointFocus: Array.isArray(tc.focusMode) && tc.focusMode.includes('single-shot') && 'pointsOfInterest' in tc,
+      manualFocus: Array.isArray(tc.focusMode) && tc.focusMode.includes('manual') && tc.focusDistance ? { min: tc.focusDistance.min, max: tc.focusDistance.max, step: tc.focusDistance.step || 0.01 } : null,
       zoom: tc.zoom ? { min: tc.zoom.min, max: tc.zoom.max, step: tc.zoom.step || 0.1 } : null,
-      stillMaxWidth: null,
       videoWidth: video.videoWidth,
       videoHeight: video.videoHeight,
     };
@@ -69,15 +80,13 @@ export class Camera {
       try {
         this.imageCapture = new ImageCapture(this.track);
         const pc = await this.imageCapture.getPhotoCapabilities();
-        this.caps.fullResStill = true;
-        this.caps.stillMaxWidth = pc.imageWidth?.max ?? null;
+        this.caps.stills = true;
+        this.caps.stillWidth = pc.imageWidth ? { min: pc.imageWidth.min, max: pc.imageWidth.max, step: pc.imageWidth.step || 1 } : null;
       } catch {
         this.imageCapture = null;
       }
     }
-    if (Array.isArray(tc.focusMode) && tc.focusMode.includes('continuous')) {
-      await this.apply({ focusMode: 'continuous' });
-    }
+    if (Array.isArray(tc.focusMode) && tc.focusMode.includes('continuous')) await this.apply({ focusMode: 'continuous' });
     return this.caps;
   }
 
@@ -101,36 +110,46 @@ export class Camera {
     return this.torchOn;
   }
 
-  async setZoom(z: number): Promise<void> {
-    if (this.caps.zoom) await this.apply({ zoom: z });
+  /** Manual focus distance where supported; null returns to continuous autofocus. */
+  async setFocus(distance: number | null): Promise<boolean> {
+    if (distance === null) return this.apply({ focusMode: 'continuous' });
+    if (!this.caps.manualFocus) return false;
+    return this.apply({ focusMode: 'manual', focusDistance: distance });
   }
 
-  /** Tap-to-focus where supported; x,y normalized 0..1. */
   async focusAt(x: number, y: number): Promise<boolean> {
     if (!this.caps.pointFocus) return false;
     return this.apply({ pointsOfInterest: [{ x, y }], focusMode: 'single-shot' });
   }
 
-  async capture(video: HTMLVideoElement): Promise<{ blob: Blob; method: 'still' | 'frame' }> {
-    if (this.imageCapture) {
+  /** Smallest supported still width ≥ target (sensor max when target is null or too big). */
+  chooseStillWidth(target: number | null): number | null {
+    const r = this.caps.stillWidth;
+    if (!r) return null;
+    if (target === null || target >= r.max) return r.max;
+    const steps = Math.ceil(Math.max(0, target - r.min) / (r.step || 1));
+    return Math.min(r.max, r.min + steps * (r.step || 1));
+  }
+
+  /**
+   * Acquire one image for a saved long edge of `target` px (null = native).
+   * Uses the live preview frame when it already has enough pixels (fast, no camera
+   * reconfiguration); otherwise a still photo at the closest supported size.
+   */
+  async acquire(video: HTMLVideoElement, target: number | null): Promise<Acquired> {
+    const previewLong = Math.max(video.videoWidth, video.videoHeight);
+    if (this.imageCapture && (target === null || target > previewLong)) {
       try {
-        const opts: Record<string, unknown> = {};
-        if (this.caps.stillMaxWidth) opts.imageWidth = this.caps.stillMaxWidth;
-        const blob = await this.imageCapture.takePhoto(opts);
-        // takePhoto can turn the torch off on some devices; restore it.
-        if (this.torchOn) void this.setTorch(true);
-        if (blob.size > 0) return { blob, method: 'still' };
+        const w = this.chooseStillWidth(target);
+        const blob = await this.imageCapture.takePhoto(w ? { imageWidth: w } : {});
+        if (this.torchOn) void this.setTorch(true); // some devices drop the torch after a still
+        if (blob.size > 0) return { kind: 'blob', blob, method: 'still', requestedWidth: w };
       } catch {
-        /* fall back to frame grab */
+        /* fall back to the preview frame */
       }
     }
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d')!.drawImage(video, 0, 0);
-    const blob = await new Promise<Blob>((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('Frame capture failed'))), 'image/jpeg', 0.95));
-    canvas.width = canvas.height = 0;
-    return { blob, method: 'frame' };
+    const bitmap = await createImageBitmap(video);
+    return { kind: 'bitmap', bitmap, width: bitmap.width, height: bitmap.height, method: 'frame' };
   }
 
   stop(): void {
@@ -142,16 +161,13 @@ export class Camera {
   }
 }
 
-/**
- * Resize (only if larger than maxSide) and re-encode as JPEG for upload, honouring
- * EXIF orientation. Quality stays high: text legibility matters more than bytes.
- */
+/** Main-thread fallback: resize (never upscale) and encode a Blob. */
 export async function prepareForUpload(blob: Blob, maxSide: number, quality: number): Promise<{ blob: Blob; width: number; height: number }> {
   const bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' } as ImageBitmapOptions);
-  const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+  const scale = maxSide > 0 ? Math.min(1, maxSide / Math.max(bmp.width, bmp.height)) : 1;
   const w = Math.round(bmp.width * scale);
   const h = Math.round(bmp.height * scale);
-  if (scale === 1 && blob.type === 'image/jpeg' && blob.size < 12 * 1024 * 1024) {
+  if (scale === 1 && blob.type === 'image/jpeg') {
     bmp.close();
     return { blob, width: w, height: h };
   }
@@ -163,6 +179,6 @@ export async function prepareForUpload(blob: Blob, maxSide: number, quality: num
   ctx.drawImage(bmp, 0, 0, w, h);
   bmp.close();
   const out = await new Promise<Blob>((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('Encode failed'))), 'image/jpeg', quality));
-  canvas.width = canvas.height = 0; // release memory promptly
+  canvas.width = canvas.height = 0;
   return { blob: out, width: w, height: h };
 }
