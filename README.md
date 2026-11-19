@@ -8,8 +8,8 @@ First project: *Darangen — Volume Two* (Maranao verse with English translation
 
 ## What works today
 
-- **Scanner (phone)**: rear camera with full-resolution stills on Chrome/Samsung Internet (Galaxy S24), torch, tap-to-focus where exposed, single-page and two-page-spread modes, editable printed page numbers, haptic + visual feedback, screen kept awake, file-input fallback.
-- **Capture now, process later**: photos go into a bounded queue in browser storage (never the gallery) and upload in the background with checksum-verified, idempotent acknowledgments and exponential backoff. Survives reloads and lost connectivity; a capture is deleted from the phone only after the server confirms the same SHA-256.
+- **Scanner (phone)**: automatic page-edge detection with live outline, crop + perspective straightening, resolution presets (Fast/Balanced/Max/Full); rear camera with full-resolution stills on Chrome/Samsung Internet (Galaxy S24), torch, tap-to-focus where exposed, single-page and two-page-spread modes, editable printed page numbers, haptic + visual feedback, screen kept awake, file-input fallback.
+- **Capture now, process later**: photos go into a bounded queue in browser storage (never the gallery) and upload in the background (two at a time, or later on Wi-Fi with “Upload later”) with checksum-verified, idempotent acknowledgments and exponential backoff. Survives reloads and lost connectivity; a capture is deleted from the phone only after the server confirms the same SHA-256.
 - **Library**: books with progress, missing/duplicate page detection, archive, guarded delete.
 - **Structure**: per-book layout (single, two independent columns, parallel translation, mixed) with per-page override; regions with bounding boxes, column, reading order, language, role and block type; draggable region editor.
 - **OCR**: self-hosted Tesseract.js running in any logged-in browser (laptop recommended) that pulls jobs from the server. Maranao is read with the Latin model and dictionaries **off**, so spellings are not "corrected" toward English. Low-confidence words are flagged.
@@ -33,7 +33,7 @@ Deploying to Hostinger: see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) (`bash scri
 
 ```bash
 vendor/bin/phpunit                 # backend: 27 tests
-(cd web && npm test)               # queue/uploader: 11 tests
+(cd web && npm test)               # uploader, page detection: 19 tests
 python3 e2e/make_fixture.py /tmp/bs-e2e && \
 python3 e2e/smoke.py http://127.0.0.1:8080 /tmp/bs-e2e/parallel.y4m <SETUP_TOKEN>   # real Chrome, fake camera, real OCR
 ```

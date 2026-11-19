@@ -39,6 +39,14 @@ export const uploader = new Uploader(queue, undefined, {
   onConfirmed: () => listeners.forEach((f) => f()),
 });
 
+uploader.paused = localStorage.getItem('bs.uploadLater') === '1';
+export function setUploadLater(on: boolean): void {
+  localStorage.setItem('bs.uploadLater', on ? '1' : '0');
+  uploader.paused = on;
+  if (!on) uploader.kick();
+  listeners.forEach((f) => f());
+}
+
 export let auth: AuthState | null = null;
 
 export async function refreshAuth(): Promise<AuthState> {

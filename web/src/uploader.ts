@@ -35,9 +35,11 @@ export interface UploaderEvents {
  */
 export class Uploader {
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private busy = false;
+  private inFlight = new Set<string>();
   private stopped = true;
   public paused = false;
+  /** Parallel uploads. Two keeps a slow mobile link busy without starving it. */
+  public concurrency = 2;
 
   constructor(
     private queue: CaptureQueue,
@@ -74,9 +76,11 @@ export class Uploader {
 
   private async loop(): Promise<void> {
     if (this.stopped) return;
-    const worked = await this.tick();
+    const free = this.concurrency - this.inFlight.size;
+    if (free <= 0) return; // a finishing upload reschedules
+    const started = await Promise.all(Array.from({ length: free }, () => this.tick()));
     if (this.stopped) return;
-    if (worked) return this.schedule(0);
+    if (started.some(Boolean)) return this.schedule(0);
     const items = await this.queue.all();
     const waits = items.filter((i) => i.status === 'retrying').map((i) => i.nextAttemptAt - this.opts.now());
     this.schedule(waits.length ? Math.max(250, Math.min(...waits)) : 5000);
@@ -84,12 +88,12 @@ export class Uploader {
 
   /** Process at most one eligible item. Returns true if an upload was attempted. */
   async tick(): Promise<boolean> {
-    if (this.busy || this.paused) return false;
+    if (this.paused || this.inFlight.size >= this.concurrency) return false;
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
     const now = this.opts.now();
-    const next = (await this.queue.all()).find((i) => i.status === 'pending' || (i.status === 'retrying' && i.nextAttemptAt <= now));
-    if (!next) return false;
-    this.busy = true;
+    const next = (await this.queue.all()).find((i) => !this.inFlight.has(i.captureId) && (i.status === 'pending' || (i.status === 'retrying' && i.nextAttemptAt <= now)));
+    if (!next || this.inFlight.has(next.captureId) || this.inFlight.size >= this.concurrency) return false;
+    this.inFlight.add(next.captureId);
     try {
       await this.queue.patch(next.captureId, { status: 'uploading' });
       this.events.onChange?.();
@@ -108,8 +112,9 @@ export class Uploader {
         await this.queue.patch(next.captureId, { status: 'blocked', attempts, lastError: `${err.code}: ${err.message}` });
       }
     } finally {
-      this.busy = false;
+      this.inFlight.delete(next.captureId);
       this.events.onChange?.();
+      if (!this.stopped) this.schedule(0);
     }
     return true;
   }

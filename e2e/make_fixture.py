@@ -19,3 +19,12 @@ d.text((930, 1300), "12", fill=(20, 20, 20), font=font)
 img.save(f'{out}/parallel.png')
 subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-loop', '1', '-i', f'{out}/parallel.png', '-t', '2', '-r', '10', '-pix_fmt', 'yuv420p', f'{out}/parallel.y4m'], check=True)
 print('ok')
+
+# Tabletop scene: the same page, smaller and rotated, on a dark desk (tests auto-crop).
+page = Image.open(f'{out}/parallel.png').resize((1300, 975))
+page = page.rotate(5, expand=True, fillcolor=(52, 38, 30))
+desk = Image.new('RGB', (W, H), (52, 38, 30))
+desk.paste(page, ((W - page.width) // 2, (H - page.height) // 2))
+desk.save(f'{out}/tabletop.png')
+subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-loop', '1', '-i', f'{out}/tabletop.png', '-t', '2', '-r', '10', '-pix_fmt', 'yuv420p', f'{out}/tabletop.y4m'], check=True)
+print('tabletop ok')

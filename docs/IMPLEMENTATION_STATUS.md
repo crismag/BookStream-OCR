@@ -14,6 +14,12 @@ Phases 0–4 implemented (minus DOCX/HTML/PDF exports). **Next: on-device valida
 - Phase 3: language-selective exports, missing/duplicate detection, reorder, renumber, rotate, spread split position.
 - Phase 4 (partial): alignment groups (inferred/verified, 1:1, 1:n, n:1, unpaired), parallel TXT and TSV.
 
+## Added 2026-11-19 (after first on-device feedback)
+
+- Automatic page-edge detection with live green outline on the preview; captures are cropped to the page and perspective-straightened in a Web Worker (3% safety margin). If edges are not clearly visible (page fills frame, light background) the full photo is kept. Toggle: “Auto-crop” on the scan screen / Settings.
+- Resolution presets on the scan screen (Fast 2400px, Balanced 3000px default, Max 4000px, Full sensor) and size of each capture shown under the thumbnail.
+- Two parallel uploads; “Upload later” mode (photos stay on the phone, upload when switched back); waiting-photo limit raised to 300 (max 1000) with a phone-storage guard.
+
 ## In progress
 
 —
@@ -30,9 +36,9 @@ Phases 0–4 implemented (minus DOCX/HTML/PDF exports). **Next: on-device valida
 | Suite | Result |
 |---|---|
 | PHPUnit (PHP 8.3, SQLite) | 27 tests, 276 assertions — pass |
-| Vitest | 11 tests — pass |
+| Vitest | 19 tests — pass (queue/uploader incl. parallel uploads, page detection, homography/warp) |
 | TypeScript strict typecheck | pass |
-| E2E (Chrome, fake camera, real Tesseract) | 19/19 checks pass; OCR of a synthetic parallel page ≈2 s |
+| E2E (Chrome, fake camera, real Tesseract) | smoke 19/19; auto-crop 8/8 (rotated page on dark desk → cropped 1334×999, 76 kB, OCR intact) |
 
 Not yet run: MySQL backend (schema is portable; CI uses SQLite), real S24 camera, Hostinger.
 
@@ -40,7 +46,8 @@ Not yet run: MySQL backend (schema is portable; CI uses SQLite), real S24 camera
 
 - Tesseract may insert blank lines between verse lines when line spacing is wide (it reports them as paragraph breaks). Text is otherwise verbatim; review if line breaks matter.
 - Presets use fixed boxes; irregular pages need manual region adjustment.
-- Upload is sequential (one at a time) by design; very slow links make the queue grow — capture pauses at the configured limit.
+- Auto-crop needs the page to contrast with the background (dark table works best); it does not flatten page curl near the binding.
+- Cropping happens on the phone, so the uploaded image is the cropped page (not the raw photo). Turn auto-crop off to keep full frames.
 - Background Sync is not used (unreliable on Android); uploads continue only while the app is open.
 
 ## Deployment status

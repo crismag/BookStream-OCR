@@ -66,15 +66,29 @@ export function confirmTyped(message: string, expected: string): boolean {
 }
 
 export const settings = {
-  get maxPending(): number { return Number(localStorage.getItem('bs.maxPending') ?? 25); },
+  get maxPending(): number { return Number(localStorage.getItem('bs.maxPending') ?? 300); },
   set maxPending(v: number) { localStorage.setItem('bs.maxPending', String(v)); },
-  get maxSide(): number { return Number(localStorage.getItem('bs.maxSide') ?? 3600); },
+  get maxSide(): number { return Number(localStorage.getItem('bs.maxSide') ?? 3000); },
   set maxSide(v: number) { localStorage.setItem('bs.maxSide', String(v)); },
-  get quality(): number { return Number(localStorage.getItem('bs.quality') ?? 0.92); },
+  get quality(): number { return Number(localStorage.getItem('bs.quality') ?? 0.9); },
   set quality(v: number) { localStorage.setItem('bs.quality', String(v)); },
+  get autoCrop(): boolean { return localStorage.getItem('bs.autoCrop') !== '0'; },
+  set autoCrop(v: boolean) { localStorage.setItem('bs.autoCrop', v ? '1' : '0'); },
   get theme(): string { return localStorage.getItem('bs.theme') ?? 'system'; },
   set theme(v: string) { localStorage.setItem('bs.theme', v); applyTheme(); },
 };
+
+/** Capture presets shown on the scan screen. */
+export const QUALITY_PRESETS: { key: string; label: string; maxSide: number; quality: number }[] = [
+  { key: 'fast', label: 'Fast', maxSide: 2400, quality: 0.88 },
+  { key: 'balanced', label: 'Balanced', maxSide: 3000, quality: 0.9 },
+  { key: 'max', label: 'Max', maxSide: 4000, quality: 0.92 },
+  { key: 'full', label: 'Full sensor', maxSide: 9000, quality: 0.94 },
+];
+
+export function currentPreset(): (typeof QUALITY_PRESETS)[number] | null {
+  return QUALITY_PRESETS.find((p) => p.maxSide === settings.maxSide && p.quality === settings.quality) ?? null;
+}
 
 export function applyTheme(): void {
   const t = settings.theme;

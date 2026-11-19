@@ -108,6 +108,24 @@ describe('Uploader', () => {
     expect(await up.tick()).toBe(false);
   });
 
+  it('runs two uploads in parallel without uploading the same capture twice', async () => {
+    let active = 0, peak = 0;
+    const seen: string[] = [];
+    const up = new Uploader(queue, async (p) => {
+      active++; peak = Math.max(peak, active); seen.push(p.captureId);
+      await new Promise((r) => setTimeout(r, 20));
+      active--;
+      return ackFor(p);
+    }, {}, { baseDelayMs: 1000, maxDelayMs: 8000, now });
+    for (let i = 1; i <= 4; i++) await queue.put(item(i));
+    await Promise.all([up.tick(), up.tick(), up.tick()]);
+    expect(peak).toBe(2);
+    expect(new Set(seen).size).toBe(seen.length);
+    while (await up.tick());
+    expect(await queue.count()).toBe(0);
+    expect(new Set(seen).size).toBe(4);
+  });
+
   it('handles 30 consecutive captures', async () => {
     const up = new Uploader(queue, async (p) => ackFor(p), {}, { baseDelayMs: 1000, maxDelayMs: 8000, now });
     for (let i = 1; i <= 30; i++) await queue.put(item(i));

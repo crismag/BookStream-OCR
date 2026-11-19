@@ -1,9 +1,11 @@
 import { api } from '../api';
-import { Camera, prepareForUpload } from '../camera';
+import { Camera } from '../camera';
+import { processCapture } from '../imageproc';
+import { detectPage, toGray } from '../pagedetect';
 import { advancePageNumber, sha256Hex, uuid, type PendingCapture } from '../queue';
 import { go } from '../router';
-import { onQueueChange, queue, uploader, type Book } from '../state';
-import { h, mount, settings, toast } from '../ui';
+import { onQueueChange, queue, setUploadLater, uploader, type Book } from '../state';
+import { QUALITY_PRESETS, currentPreset, fmtBytes, h, mount, settings, toast } from '../ui';
 
 type Mode = 'single' | 'spread';
 
@@ -26,6 +28,11 @@ export async function scanView(root: HTMLElement, bookId: string): Promise<() =>
 
   const video = h('video', { class: 'preview', playsinline: true, muted: true, autoplay: true, 'aria-label': 'Camera preview' });
   const guide = h('div', { class: 'guide', 'aria-hidden': 'true' });
+  const outline = h('canvas', { class: 'outline', 'aria-hidden': 'true' });
+  const detectHint = h('span', { class: 'detecthint' });
+  const lastInfo = h('span', { class: 'lastinfo small' });
+  const qualityBtn = h('button', { class: 'tool', title: 'Photo resolution / size' });
+  const cropBtn = h('button', { class: 'tool', title: 'Crop each photo to the detected page edges' });
   const flash = h('div', { class: 'flash', 'aria-hidden': 'true' });
   const lastThumb = h('canvas', { class: 'lastthumb', width: 96, height: 72, 'aria-label': 'Last capture' });
   const pageLabel = h('button', { class: 'pagebtn', title: 'Set the printed page number' });
@@ -35,7 +42,7 @@ export async function scanView(root: HTMLElement, bookId: string): Promise<() =>
   const shutter = h('button', { class: 'shutter', 'aria-label': 'Capture page' }, h('span', null));
   const modeBtn = h('button', { class: 'tool' });
   const torchBtn = h('button', { class: 'tool', hidden: true }, '☀ Light');
-  const pauseBtn = h('button', { class: 'tool' });
+  const pauseBtn = h('button', { class: 'tool', title: 'Upload now, or keep photos on this phone and upload later' });
   const undoBtn = h('button', { class: 'tool', disabled: true }, '↶ Undo');
   const retryBtn = h('button', { class: 'tool', hidden: true }, '↻ Retry');
   const fileInput = h('input', { type: 'file', accept: 'image/*', capture: 'environment', hidden: true });
@@ -49,7 +56,13 @@ export async function scanView(root: HTMLElement, bookId: string): Promise<() =>
     modeBtn.setAttribute('aria-pressed', String(mode === 'spread'));
     guide.className = `guide ${mode}`;
     counts.textContent = `${sessionCount} this session · ${book.stats.pages} stored before`;
-    pauseBtn.textContent = uploader.paused ? '▶ Resume uploads' : '❚❚ Pause uploads';
+    pauseBtn.textContent = uploader.paused ? '⏸ Upload later' : '☁ Uploading';
+    pauseBtn.setAttribute('aria-pressed', String(uploader.paused));
+    const pr = currentPreset();
+    qualityBtn.textContent = `▣ ${pr ? pr.label : 'Custom'} ${settings.maxSide >= 9000 ? '' : settings.maxSide + 'px'}`.trim();
+    cropBtn.textContent = settings.autoCrop ? '⬚ Auto-crop on' : '⬚ Auto-crop off';
+    cropBtn.setAttribute('aria-pressed', String(settings.autoCrop));
+    if (!settings.autoCrop) { detectHint.textContent = ''; outline.getContext('2d')?.clearRect(0, 0, outline.width, outline.height); }
   };
 
   const renderQueue = async () => {
@@ -89,7 +102,16 @@ export async function scanView(root: HTMLElement, bookId: string): Promise<() =>
       toast('Upload queue is full. Capture not taken.', 'error');
       return;
     }
-    const { blob } = await prepareForUpload(raw, settings.maxSide, settings.quality);
+    try {
+      const est = await navigator.storage?.estimate?.();
+      if (est?.quota && est.usage != null && est.quota - est.usage < 150 * 1024 * 1024) {
+        toast('Phone storage for this app is almost full. Upload waiting photos before capturing more.', 'error');
+        return;
+      }
+    } catch { /* estimate is optional */ }
+    const proc = await processCapture(raw, { maxSide: settings.maxSide, quality: settings.quality, autoCrop: settings.autoCrop });
+    const blob = proc.blob;
+    lastInfo.textContent = `${proc.width}×${proc.height} · ${fmtBytes(blob.size)}${settings.autoCrop ? (proc.cropped ? ' · cropped' : ' · full frame') : ''}`;
     const checksum = await sha256Hex(blob);
     const pages = mode === 'spread' ? 2 : 1;
     const item: PendingCapture = {
@@ -133,7 +155,21 @@ export async function scanView(root: HTMLElement, bookId: string): Promise<() =>
     if (printed !== null) localStorage.setItem(nextKey, printed); else localStorage.removeItem(nextKey);
     renderLabels();
   });
-  pauseBtn.addEventListener('click', () => { uploader.paused = !uploader.paused; if (!uploader.paused) uploader.kick(); renderLabels(); void renderQueue(); });
+  pauseBtn.addEventListener('click', () => {
+    setUploadLater(!uploader.paused);
+    toast(uploader.paused ? 'Upload later: photos stay on this phone until you switch back' : 'Uploading now', 'ok');
+    renderLabels();
+    void renderQueue();
+  });
+  qualityBtn.addEventListener('click', () => {
+    const i = QUALITY_PRESETS.findIndex((p) => p === currentPreset());
+    const next = QUALITY_PRESETS[(i + 1) % QUALITY_PRESETS.length];
+    settings.maxSide = next.maxSide;
+    settings.quality = next.quality;
+    toast(`${next.label}: ${next.maxSide >= 9000 ? 'full camera resolution' : 'long side ' + next.maxSide + 'px'}, JPEG ${Math.round(next.quality * 100)}%`);
+    renderLabels();
+  });
+  cropBtn.addEventListener('click', () => { settings.autoCrop = !settings.autoCrop; renderLabels(); });
   retryBtn.addEventListener('click', () => void uploader.retryNow());
   torchBtn.addEventListener('click', async () => {
     const ok = await camera.setTorch(!camera.torch);
@@ -166,6 +202,40 @@ export async function scanView(root: HTMLElement, bookId: string): Promise<() =>
     const r = video.getBoundingClientRect();
     if (await camera.focusAt((ev.clientX - r.left) / r.width, (ev.clientY - r.top) / r.height)) toast('Focusing…');
   });
+
+  // Live page-edge outline on the preview (low-res, ~3×/s, main thread is fine at 320px).
+  const probe = document.createElement('canvas');
+  const detectTimer = setInterval(() => {
+    if (!settings.autoCrop || !camera.stream || video.videoWidth === 0 || document.hidden) return;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const s = 320 / Math.max(vw, vh);
+    probe.width = Math.round(vw * s);
+    probe.height = Math.round(vh * s);
+    const pctx = probe.getContext('2d', { willReadFrequently: true })!;
+    pctx.drawImage(video, 0, 0, probe.width, probe.height);
+    const det = detectPage(toGray(pctx.getImageData(0, 0, probe.width, probe.height).data, probe.width, probe.height), probe.width, probe.height);
+    const box = video.getBoundingClientRect();
+    outline.width = Math.round(box.width);
+    outline.height = Math.round(box.height);
+    const ctx = outline.getContext('2d')!;
+    ctx.clearRect(0, 0, outline.width, outline.height);
+    // object-fit: contain → letterbox offsets
+    const k = Math.min(box.width / vw, box.height / vh);
+    const ox = (box.width - vw * k) / 2, oy = (box.height - vh * k) / 2;
+    if (det) {
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 4;
+      ctx.fillStyle = 'rgba(34,197,94,0.12)';
+      ctx.beginPath();
+      det.quad.forEach((p, i) => (i ? ctx.lineTo : ctx.moveTo).call(ctx, ox + p.x * vw * k, oy + p.y * vh * k));
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      detectHint.textContent = '✓ Page edges found — photo will be cropped & straightened';
+    } else {
+      detectHint.textContent = '○ Edges not visible — full photo will be kept';
+    }
+  }, 350);
 
   const startCamera = async () => {
     fallback.hidden = true;
@@ -207,12 +277,12 @@ export async function scanView(root: HTMLElement, bookId: string): Promise<() =>
         h('button', { class: 'tool', onclick: () => go('/'), 'aria-label': 'Back to dashboard' }, '←'),
         h('div', { class: 'scantitle' }, h('strong', null, book.title), counts),
         pageLabel),
-      h('div', { class: 'stage' }, video, guide, flash, fallback),
-      h('div', { class: 'scanbar status' }, queueStat, camInfo),
+      h('div', { class: 'stage' }, video, guide, outline, flash, fallback),
+      h('div', { class: 'scanbar status' }, queueStat, detectHint, camInfo),
       h('div', { class: 'scanbar bottom' },
-        h('div', { class: 'toolcol' }, modeBtn, torchBtn, undoBtn),
+        h('div', { class: 'toolcol' }, modeBtn, cropBtn, qualityBtn, torchBtn, undoBtn),
         shutter,
-        h('div', { class: 'toolcol' }, lastThumb, pauseBtn, retryBtn,
+        h('div', { class: 'toolcol' }, lastThumb, lastInfo, pauseBtn, retryBtn,
           h('button', { class: 'tool', onclick: () => go(`/books/${bookId}/pages`) }, '✓ Finish'))),
       fileInput));
 
@@ -223,6 +293,7 @@ export async function scanView(root: HTMLElement, bookId: string): Promise<() =>
 
   return () => {
     camera.stop();
+    clearInterval(detectTimer);
     off();
     document.removeEventListener('visibilitychange', onVisible);
     window.removeEventListener('keydown', onKey);

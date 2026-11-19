@@ -19,6 +19,10 @@ In-process requests against `App::handle()` with SQLite + temp storage.
 Chrome with a fake camera playing a synthetic parallel Maranao/English page (`e2e/make_fixture.py`), mobile viewport:
 setup → create book → 3 captures → all confirmed → reload/resume numbering → gallery thumbnails → unauthenticated image denied → queue OCR → in-browser Tesseract worker → review text (Maranao words and verse line breaks intact) → correction → language-selective TXT, TSV, JSON provenance → no JS errors.
 
+## Auto-crop e2e (`e2e/crop_check.py`)
+
+Fake camera shows the page rotated 5° on a dark desk: live outline detected, capture cropped and straightened, upload-later keeps the photo on the phone, switching back uploads it, OCR of the straightened page still reads both languages.
+
 ## Not automatable here (manual, on the S24)
 
 - Real rear camera: autofocus, torch, full-resolution `takePhoto`, rotation, permission recovery.

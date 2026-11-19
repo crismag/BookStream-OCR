@@ -143,3 +143,8 @@ details summary { cursor: pointer; font-weight: 600; min-height: 32px; }
 .exportrow { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem; align-items: center; border-top: 1px solid var(--line); padding: .6rem 0; }
 .preview-text { white-space: pre-wrap; max-height: 60vh; overflow: auto; background: var(--bg); padding: .6rem; border-radius: 6px; font-size: .9rem; }
 @media (max-width: 520px) { .row2 { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(2, 1fr); } }
+.outline { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.detecthint { color: #86efac; }
+.lastinfo { color: #cbd5e1; text-align: center; max-width: 120px; }
+.scan .toolcol .tool { width: 100%; }
+@media (max-height: 760px) { .scan .tool { min-height: 38px; font-size: .8rem; } .shutter { width: 74px; height: 74px; } .shutter span { width: 56px; height: 56px; } }
