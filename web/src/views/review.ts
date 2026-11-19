@@ -41,6 +41,8 @@ export async function reviewView(root: HTMLElement, pageId: string): Promise<() 
   let dirty = false;
   let selected = new Set<number>();
   let busy = false;
+  /** Crop being edited on the uncropped capture (normalized), or null when not editing. */
+  let cropEdit: Bbox | null = null;
 
   const stage = h('div', { class: 'reviewstage' });
   const panel = h('div', { class: 'reviewpanel' });
@@ -67,7 +69,47 @@ export async function reviewView(root: HTMLElement, pageId: string): Promise<() 
 
   const guardDirty = async (): Promise<boolean> => !dirty || (confirm('Save region changes first?') ? saveRegions() : (dirty = false, true));
 
+  const drawCropStage = () => {
+    const c = cropEdit!;
+    const img = h('img', { src: `/api/pages/${pageId}/image?variant=original`, alt: 'Full captured photo', draggable: 'false' });
+    const layer = h('div', { class: 'regionlayer' });
+    const box = h('div', { class: 'rbox cropbox', style: { left: `${c.x * 100}%`, top: `${c.y * 100}%`, width: `${c.w * 100}%`, height: `${c.h * 100}%` } },
+      h('span', { class: 'rlabel', style: { background: '#f59e0b' } }, 'page crop'), h('span', { class: 'rhandle', style: { background: '#f59e0b' } }));
+    box.addEventListener('pointerdown', (ev: PointerEvent) => {
+      ev.preventDefault();
+      const resize = (ev.target as HTMLElement).classList.contains('rhandle');
+      const rect = layer.getBoundingClientRect();
+      const sx = ev.clientX, sy = ev.clientY, b0 = { ...c };
+      box.setPointerCapture(ev.pointerId);
+      const mv = (e: PointerEvent) => {
+        const dx = (e.clientX - sx) / rect.width, dy = (e.clientY - sy) / rect.height;
+        if (resize) { c.w = clamp(b0.w + dx, 0.05, 1 - b0.x); c.h = clamp(b0.h + dy, 0.05, 1 - b0.y); }
+        else { c.x = clamp(b0.x + dx, 0, 1 - b0.w); c.y = clamp(b0.y + dy, 0, 1 - b0.h); }
+        Object.assign(box.style, { left: `${c.x * 100}%`, top: `${c.y * 100}%`, width: `${c.w * 100}%`, height: `${c.h * 100}%` });
+      };
+      const up = () => { box.removeEventListener('pointermove', mv); box.removeEventListener('pointerup', up); };
+      box.addEventListener('pointermove', mv);
+      box.addEventListener('pointerup', up);
+    });
+    layer.appendChild(box);
+    mount(stage, h('div', { class: 'imgwrap' }, img, layer),
+      h('p', { class: 'muted small' }, 'Drag the box to cover the whole page (corner square resizes). The photo itself is never changed — only which part is used.'),
+      h('div', { class: 'actions' },
+        h('button', { class: 'primary', onclick: async () => {
+          const fresh = await api<Detail>('PATCH', `/api/pages/${pageId}`, { crop_region: c });
+          cropEdit = null;
+          await reload(fresh);
+          if (regions.some((r) => r.text) && confirm('Crop saved. Run OCR again for this page so the text matches the new crop?')) {
+            await api('POST', `/api/books/${d.page.book_id}/ocr/enqueue`, { page_ids: [pageId], force: true });
+            toast('Page queued for OCR', 'ok');
+          }
+        } }, 'Save crop'),
+        h('button', { onclick: async () => { cropEdit = null; await reload(await api<Detail>('PATCH', `/api/pages/${pageId}`, { crop_region: null })); toast('Crop reset to default', 'ok'); } }, 'Reset'),
+        h('button', { onclick: () => { cropEdit = null; draw(); } }, 'Cancel')));
+  };
+
   const drawStage = () => {
+    if (cropEdit) return drawCropStage();
     const img = h('img', { src: `/api/pages/${pageId}/image?variant=view&v=${encodeURIComponent(d.page.updated_at)}`, alt: 'Scanned page', draggable: 'false' });
     const layer = h('div', { class: 'regionlayer' });
     regions.forEach((r, i) => {
@@ -179,7 +221,7 @@ export async function reviewView(root: HTMLElement, pageId: string): Promise<() 
         h('button', { onclick: async () => { await api('PATCH', `/api/pages/${pageId}`, { review_status: 'reviewed' }); toast('Marked reviewed', 'ok'); if (p.next_page_id) go(`/pages/${p.next_page_id}/review`); else void reload(); } }, '✔ Mark reviewed'),
         p.review_status === 'reviewed' ? h('button', { onclick: async () => { await reload(await api<Detail>('PATCH', `/api/pages/${pageId}`, { review_status: 'needs_review' })); } }, 'Reopen') : null),
       h('details', { class: 'tools', open: false },
-        h('summary', null, 'Page tools: layout, rotation, split, number'),
+        h('summary', null, 'Page tools: crop, layout, rotation, split, number'),
         h('div', { class: 'actions' },
           h('button', { class: 'small', onclick: async () => reload(await api<Detail>('PATCH', `/api/pages/${pageId}`, { rotation: p.rotation - 90 })) }, '⟲ Rotate'),
           h('button', { class: 'small', onclick: async () => reload(await api<Detail>('PATCH', `/api/pages/${pageId}`, { rotation: p.rotation + 90 })) }, '⟳ Rotate'),
@@ -189,6 +231,12 @@ export async function reviewView(root: HTMLElement, pageId: string): Promise<() 
               if (v !== null) await reload(await api<Detail>('PATCH', `/api/pages/${pageId}`, { printed_page_number: v.trim() || null }));
             },
           }, '# Page number'),
+          h('button', { class: 'small', onclick: () => {
+            const def = p.side === 'left' ? { x: 0, y: 0, w: 0.5, h: 1 } : p.side === 'right' ? { x: 0.5, y: 0, w: 0.5, h: 1 } : { x: 0, y: 0, w: 1, h: 1 };
+            cropEdit = { ...(p.crop_region ?? def) };
+            drawStage();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          } }, '✂ Adjust crop'),
           h('a', { class: 'button small', href: `/api/pages/${pageId}/image?variant=original`, target: '_blank', rel: 'noopener' }, 'Original photo')),
         split ? h('label', null, `Spread split position (${p.side} page)`, split) : null,
         h('label', null, 'Layout for this page', layoutSel),

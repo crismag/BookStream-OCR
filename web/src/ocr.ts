@@ -21,6 +21,31 @@ export interface JobRegion {
   block_type: string;
 }
 
+/** Stable id for this browser as an OCR worker (shown on the scanner as "worker active"). */
+export function workerIdentity(): { worker_id: string; worker_label: string } {
+  let id = '';
+  try { id = localStorage.getItem('bs.workerId') ?? ''; } catch { /* ignore */ }
+  if (!id) {
+    id = 'w-' + Math.random().toString(36).slice(2, 12);
+    try { localStorage.setItem('bs.workerId', id); } catch { /* ignore */ }
+  }
+  const ua = navigator.userAgent;
+  const device = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : 'Desktop';
+  const browser = /SamsungBrowser/.test(ua) ? 'Samsung Internet' : /Edg\//.test(ua) ? 'Edge' : /Chrome\//.test(ua) ? 'Chrome' : /Firefox/.test(ua) ? 'Firefox' : 'Browser';
+  return { worker_id: id, worker_label: `${browser} on ${device}` };
+}
+
+/**
+ * Images this device just uploaded, keyed by page id. Lets OCR on the same device
+ * reuse the bytes instead of downloading them again (single-page captures only,
+ * where the stored image equals the uploaded one). Bounded to 12 entries.
+ */
+const localImages = new Map<string, Blob>();
+export function rememberLocalImage(pageId: string, blob: Blob): void {
+  localImages.set(pageId, blob);
+  while (localImages.size > 12) localImages.delete(localImages.keys().next().value as string);
+}
+
 export interface RegionResult {
   region_id: string;
   text: string;
@@ -30,6 +55,7 @@ export interface RegionResult {
   engine_version: string;
   language: string;
   settings: Record<string, unknown>;
+  duration_ms: number;
 }
 
 const workers = new Map<string, Promise<Worker>>();
@@ -93,6 +119,7 @@ export function cropForOcr(src: ImageBitmap, bbox: JobRegion['bbox']): HTMLCanva
 }
 
 export async function recognizeRegion(page: ImageBitmap, r: JobRegion): Promise<RegionResult> {
+  const t0 = performance.now();
   const w = await worker(r.tesseract_lang, r.use_dictionary);
   await w.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK, preserve_interword_spaces: '1' });
   const canvas = cropForOcr(page, r.bbox);
@@ -111,6 +138,7 @@ export async function recognizeRegion(page: ImageBitmap, r: JobRegion): Promise<
     engine_version: ENGINE_VERSION,
     language: r.tesseract_lang,
     settings: { psm: 'SINGLE_BLOCK', oem: 'LSTM_ONLY', dictionaries: r.use_dictionary, preprocess: 'gray+stretch', declared_lang: r.lang },
+    duration_ms: Math.round(performance.now() - t0),
   };
 }
 
@@ -126,13 +154,20 @@ export interface Job {
 
 /** Lease → OCR → submit, once. Returns null when no job is available. */
 export async function processOne(bookId: string | null, log: (s: string) => void, stop: () => boolean): Promise<Job | null> {
-  const { job } = await api<{ job: Job | null }>('POST', '/api/ocr/lease', bookId ? { book_id: bookId } : {});
+  const ident = workerIdentity();
+  const { job } = await api<{ job: Job | null }>('POST', '/api/ocr/lease', { ...ident, ...(bookId ? { book_id: bookId } : {}) });
   if (!job) return null;
   const label = job.printed_page_number ? `p.${job.printed_page_number}` : job.page_id.slice(0, 8);
   try {
-    const res = await fetch(job.image_url, { credentials: 'same-origin' });
-    if (!res.ok) throw new Error(`image ${res.status}`);
-    const bmp = await createImageBitmap(await res.blob());
+    let blob = localImages.get(job.page_id);
+    if (blob) {
+      log(`${label}: using image already on this device (no download)`);
+    } else {
+      const res = await fetch(job.image_url, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error(`image ${res.status}`);
+      blob = await res.blob();
+    }
+    const bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' } as ImageBitmapOptions);
     const results: RegionResult[] = [];
     for (const r of job.regions) {
       if (stop()) throw new Error('stopped by user');
@@ -140,11 +175,40 @@ export async function processOne(bookId: string | null, log: (s: string) => void
       results.push(await recognizeRegion(bmp, r));
     }
     bmp.close();
-    const out = await api<{ status: string }>('POST', `/api/ocr/jobs/${job.id}/complete`, { lease_token: job.lease_token, results });
+    const out = await api<{ status: string }>('POST', `/api/ocr/jobs/${job.id}/complete`, { ...ident, lease_token: job.lease_token, results });
+    localImages.delete(job.page_id);
     log(`${label}: ${out.status.replace('_', ' ')}`);
   } catch (e) {
     log(`${label}: failed — ${(e as Error).message}`);
-    await api('POST', `/api/ocr/jobs/${job.id}/fail`, { lease_token: job.lease_token, error: (e as Error).message }).catch(() => undefined);
+    await api('POST', `/api/ocr/jobs/${job.id}/fail`, { ...ident, lease_token: job.lease_token, error: (e as Error).message }).catch(() => undefined);
   }
   return job;
+}
+
+/** Heartbeat while idle so the scanner can show "OCR worker active". */
+export function pingWorker(): Promise<unknown> {
+  return api('POST', '/api/ocr/ping', workerIdentity()).catch(() => undefined);
+}
+
+/**
+ * Background OCR loop for this tab. `canRun()` lets the scanner hold OCR back while
+ * the camera is busy so the two never compete. Returns a stop function.
+ */
+export function startOcrLoop(bookId: string | null, log: (s: string) => void, canRun: () => boolean): () => void {
+  let stopped = false;
+  void (async () => {
+    let idle = 0;
+    while (!stopped) {
+      if (!canRun()) { await new Promise((r) => setTimeout(r, 1500)); continue; }
+      try {
+        const job = await processOne(bookId, log, () => stopped);
+        if (job) { idle = 0; continue; }
+      } catch (e) { log(`OCR error: ${(e as Error).message}`); }
+      idle++;
+      const wait = Math.min(15000, 3000 * idle);
+      const until = Date.now() + wait;
+      while (!stopped && Date.now() < until) await new Promise((r) => setTimeout(r, 500));
+    }
+  })();
+  return () => { stopped = true; };
 }

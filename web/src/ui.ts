@@ -46,10 +46,10 @@ export function toast(msg: string, kind: 'ok' | 'error' | 'info' = 'info'): void
 /** Status badge: icon + text, never color alone. */
 export function badge(status: string): HTMLElement {
   const map: Record<string, [string, string]> = {
-    not_processed: ['○', 'Not processed'], queued: ['⧗', 'Queued'], processing: ['⟳', 'Processing'],
-    ocr_complete: ['✓', 'OCR complete'], needs_review: ['!', 'Needs review'], failed: ['✕', 'Failed'],
+    not_processed: ['○', 'Stored · no OCR'], queued: ['⧗', 'OCR queued'], processing: ['⟳', 'OCR processing'],
+    ocr_complete: ['✓', 'Text saved'], needs_review: ['!', 'Text saved · needs review'], failed: ['✕', 'OCR failed'],
     reviewed: ['✔', 'Reviewed'], not_reviewed: ['·', 'Not reviewed'],
-    pending: ['⧗', 'Pending'], uploading: ['↑', 'Uploading'], retrying: ['↻', 'Retrying'], blocked: ['✕', 'Needs attention'],
+    pending: ['💾', 'Saved locally'], uploading: ['↑', 'Uploading'], retrying: ['↻', 'Retrying'], blocked: ['✕', 'Needs attention'],
     confirmed: ['✓', 'Stored'], corrected: ['✎', 'Corrected'], ocr_text: ['⌨', 'Raw OCR'], inferred: ['≈', 'Inferred'], verified: ['✔', 'Verified'],
   };
   const [icon, label] = map[status] ?? ['·', status];
@@ -65,29 +65,63 @@ export function confirmTyped(message: string, expected: string): boolean {
   return v === expected;
 }
 
-export const settings = {
-  get maxPending(): number { return Number(localStorage.getItem('bs.maxPending') ?? 300); },
-  set maxPending(v: number) { localStorage.setItem('bs.maxPending', String(v)); },
-  get maxSide(): number { return Number(localStorage.getItem('bs.maxSide') ?? 3000); },
-  set maxSide(v: number) { localStorage.setItem('bs.maxSide', String(v)); },
-  get quality(): number { return Number(localStorage.getItem('bs.quality') ?? 0.9); },
-  set quality(v: number) { localStorage.setItem('bs.quality', String(v)); },
-  get autoCrop(): boolean { return localStorage.getItem('bs.autoCrop') !== '0'; },
-  set autoCrop(v: boolean) { localStorage.setItem('bs.autoCrop', v ? '1' : '0'); },
-  get theme(): string { return localStorage.getItem('bs.theme') ?? 'system'; },
-  set theme(v: string) { localStorage.setItem('bs.theme', v); applyTheme(); },
-};
+export type PresetKey = 'minimal' | 'fast' | 'balanced' | 'quality' | 'maximum';
+export type CropSetting = 'off' | 'guide' | 'auto';
+export type GuideAspect = 'auto' | 'a4' | 'letter' | 'custom';
 
-/** Capture presets shown on the scan screen. */
-export const QUALITY_PRESETS: { key: string; label: string; maxSide: number; quality: number }[] = [
-  { key: 'fast', label: 'Fast', maxSide: 2400, quality: 0.88 },
-  { key: 'balanced', label: 'Balanced', maxSide: 3000, quality: 0.9 },
-  { key: 'max', label: 'Max', maxSide: 4000, quality: 0.92 },
-  { key: 'full', label: 'Full sensor', maxSide: 9000, quality: 0.94 },
+/** Saved-image presets (target long edge; 0 = native camera resolution, never upscaled). */
+export const PRESETS: { key: PresetKey; label: string; maxSide: number; quality: number }[] = [
+  { key: 'minimal', label: 'Minimal', maxSide: 1600, quality: 0.8 },
+  { key: 'fast', label: 'Fast', maxSide: 2000, quality: 0.82 },
+  { key: 'balanced', label: 'Balanced', maxSide: 2400, quality: 0.85 },
+  { key: 'quality', label: 'Quality', maxSide: 3000, quality: 0.88 },
+  { key: 'maximum', label: 'Maximum', maxSide: 0, quality: 0.92 },
 ];
 
-export function currentPreset(): (typeof QUALITY_PRESETS)[number] | null {
-  return QUALITY_PRESETS.find((p) => p.maxSide === settings.maxSide && p.quality === settings.quality) ?? null;
+const ls = {
+  get: (k: string, d: string) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } },
+  set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* quota/private mode */ } },
+};
+
+// v2 keys: earlier v1 values (bs.maxSide etc.) are intentionally ignored.
+export const settings = {
+  get preset(): PresetKey { return ls.get('bs2.preset', 'balanced') as PresetKey; },
+  set preset(v: PresetKey) { ls.set('bs2.preset', v); },
+  /** 0 = use the preset's quality. */
+  get qualityOverride(): number { return Number(ls.get('bs2.quality', '0')); },
+  set qualityOverride(v: number) { ls.set('bs2.quality', String(v)); },
+  get minimal(): boolean { return ls.get('bs2.minimal', '0') === '1'; },
+  set minimal(v: boolean) { ls.set('bs2.minimal', v ? '1' : '0'); },
+  get crop(): CropSetting { return ls.get('bs2.crop', 'auto') as CropSetting; },
+  set crop(v: CropSetting) { ls.set('bs2.crop', v); },
+  get guideAspect(): GuideAspect { return ls.get('bs2.guideAspect', 'auto') as GuideAspect; },
+  set guideAspect(v: GuideAspect) { ls.set('bs2.guideAspect', v); },
+  /** Custom page width/height ratio, e.g. 0.68 for a narrow book. */
+  get customRatio(): number { return Number(ls.get('bs2.customRatio', '0.68')); },
+  set customRatio(v: number) { ls.set('bs2.customRatio', String(v)); },
+  /** Guide size as a fraction of the available frame (adjustable). */
+  get guideScale(): number { return Number(ls.get('bs2.guideScale', '0.92')); },
+  set guideScale(v: number) { ls.set('bs2.guideScale', String(v)); },
+  get maxPending(): number { return Number(ls.get('bs2.maxPending', '300')); },
+  set maxPending(v: number) { ls.set('bs2.maxPending', String(v)); },
+  get concurrency(): number { return Number(ls.get('bs2.concurrency', '2')); },
+  set concurrency(v: number) { ls.set('bs2.concurrency', String(v)); },
+  get timer(): number { return Number(ls.get('bs2.timer', '0')); },
+  set timer(v: number) { ls.set('bs2.timer', String(v)); },
+  get interval(): number { return Number(ls.get('bs2.interval', '6')); },
+  set interval(v: number) { ls.set('bs2.interval', String(v)); },
+  get localOcr(): boolean { return ls.get('bs2.localOcr', '0') === '1'; },
+  set localOcr(v: boolean) { ls.set('bs2.localOcr', v ? '1' : '0'); },
+  get theme(): string { return ls.get('bs.theme', 'system'); },
+  set theme(v: string) { ls.set('bs.theme', v); applyTheme(); },
+};
+
+export function preset(): (typeof PRESETS)[number] {
+  return PRESETS.find((p) => p.key === settings.preset) ?? PRESETS[2];
+}
+
+export function effectiveQuality(): number {
+  return settings.qualityOverride > 0 ? settings.qualityOverride : preset().quality;
 }
 
 export function applyTheme(): void {

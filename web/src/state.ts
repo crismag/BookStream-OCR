@@ -1,6 +1,8 @@
 import { api, setCsrf } from './api';
 import { CaptureQueue } from './queue';
 import { Uploader } from './uploader';
+import { rememberLocalImage } from './ocr';
+import { settings } from './ui';
 
 export interface AuthState {
   setup_required: boolean;
@@ -34,10 +36,17 @@ export function onQueueChange(fn: () => void): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
 }
+export let sessionStored = 0;
 export const uploader = new Uploader(queue, undefined, {
   onChange: () => listeners.forEach((f) => f()),
-  onConfirmed: () => listeners.forEach((f) => f()),
+  onConfirmed: (item, ack) => {
+    sessionStored++;
+    // Keep the bytes briefly for same-device OCR (single pages only: stored image == uploaded image).
+    if (settings.localOcr && item.mode === 'single' && ack.pages.length === 1) rememberLocalImage(ack.pages[0].id, item.blob);
+    listeners.forEach((f) => f());
+  },
 });
+uploader.setConcurrency(settings.concurrency);
 
 uploader.paused = localStorage.getItem('bs.uploadLater') === '1';
 export function setUploadLater(on: boolean): void {

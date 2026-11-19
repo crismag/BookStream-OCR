@@ -1,6 +1,6 @@
 import { ApiError, api } from './api';
 import { record } from './metrics';
-import type { CaptureQueue, PendingCapture, PendingMeta } from './queue';
+import type { CaptureQueue, PendingCapture } from './queue';
 
 export interface Ack {
   status: string;
@@ -27,7 +27,7 @@ export const defaultUpload: UploadFn = (item) => {
 };
 
 export interface UploaderEvents {
-  onConfirmed?: (item: PendingMeta, ack: Ack) => void;
+  onConfirmed?: (item: PendingCapture, ack: Ack) => void;
   onChange?: () => void;
 }
 
@@ -125,7 +125,7 @@ export class Uploader {
       if (typeof ack.server_ms === 'number') record('server_ms', ack.server_ms);
       this.streak++;
       if (this.streak >= 3 && this.effective < this.concurrency) { this.effective++; this.streak = 0; }
-      this.events.onConfirmed?.(next, ack);
+      this.events.onConfirmed?.(full, ack);
     } catch (e) {
       const err = e instanceof ApiError ? e : new ApiError(0, 'unknown', String(e));
       const attempts = next.attempts + 1;
