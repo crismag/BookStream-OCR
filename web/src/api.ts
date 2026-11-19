@@ -4,7 +4,9 @@ export class ApiError extends Error {
   }
   /** Network errors, timeouts, 429 and 5xx are worth retrying; 4xx validation errors are not. */
   get retryable(): boolean {
-    return this.status === 0 || this.status === 408 || this.status === 429 || this.status >= 500 || this.code === 'race';
+    // csrf_failed: token is refreshed automatically; unauthenticated: retried after sign-in.
+    return this.status === 0 || this.status === 408 || this.status === 429 || this.status >= 500
+      || this.code === 'race' || this.code === 'csrf_failed' || this.code === 'unauthenticated';
   }
 }
 

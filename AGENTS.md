@@ -14,6 +14,7 @@ Design decisions: `docs/superpowers/specs/2026-11-19-bookstream-design.md` and `
 | Dev server | `php -S 127.0.0.1:8080 -t public public/router.php` (needs `.env` with `SETUP_TOKEN`) |
 | E2E | `python3 e2e/make_fixture.py /tmp/bs-e2e && python3 e2e/smoke.py http://127.0.0.1:8080 /tmp/bs-e2e/parallel.y4m <token>` |
 | E2E auto-crop | `python3 e2e/crop_check.py <base> /tmp/bs-e2e/tabletop.y4m <user> <password>` (after smoke) |
+| Benchmark | `python3 e2e/bench.py <base> /tmp/bs-e2e/parallel.y4m <user> <password> out.json` |
 | Deploy zip | `bash scripts/package.sh` |
 
 ## Hard rules

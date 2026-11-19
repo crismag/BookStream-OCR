@@ -136,7 +136,17 @@ export class Camera {
    * Uses the live preview frame when it already has enough pixels (fast, no camera
    * reconfiguration); otherwise a still photo at the closest supported size.
    */
+  /** Resolves when the preview has a frame (after start/restart), or rejects after `ms`. */
+  async ready(video: HTMLVideoElement, ms = 3000): Promise<void> {
+    const t0 = performance.now();
+    while (!(this.stream && this.track?.readyState === 'live' && video.readyState >= 2 && video.videoWidth > 0)) {
+      if (performance.now() - t0 > ms) throw new Error('camera is not ready yet');
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
+
   async acquire(video: HTMLVideoElement, target: number | null): Promise<Acquired> {
+    await this.ready(video);
     const previewLong = Math.max(video.videoWidth, video.videoHeight);
     if (this.imageCapture && (target === null || target > previewLong)) {
       try {

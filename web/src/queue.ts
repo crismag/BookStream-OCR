@@ -156,10 +156,15 @@ export class CaptureQueue {
     return next;
   }
 
-  /** Items whose upload was interrupted (tab closed mid-upload) become pending again. */
+  /**
+   * Startup recovery: uploads interrupted mid-flight become pending again, and items
+   * blocked only by an expired session/security token (a v1 bug after reloads) are
+   * released for retry. Nothing is ever dropped here.
+   */
   async recoverInterrupted(): Promise<void> {
     for (const it of await this.all()) {
-      if (it.status === 'uploading') await this.patch(it.captureId, { status: 'pending' });
+      const sessionBlock = it.status === 'blocked' && /^(csrf_failed|unauthenticated)/.test(it.lastError ?? '');
+      if (it.status === 'uploading' || sessionBlock) await this.patch(it.captureId, { status: 'pending', nextAttemptAt: 0 });
     }
   }
 }

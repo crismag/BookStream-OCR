@@ -101,6 +101,15 @@ describe('Uploader', () => {
     expect((await queue.get(p.captureId))?.status).toBe('pending');
   });
 
+  it('releases captures blocked by an expired security token on startup', async () => {
+    const a = item(1, { status: 'blocked', lastError: 'csrf_failed: Security token missing' });
+    const b = item(2, { status: 'blocked', lastError: 'capture_conflict: different image' });
+    await queue.put(a); await queue.put(b);
+    await queue.recoverInterrupted();
+    expect((await queue.get(a.captureId))?.status).toBe('pending');
+    expect((await queue.get(b.captureId))?.status).toBe('blocked');
+  });
+
   it('does nothing while paused', async () => {
     const up = new Uploader(queue, async (p) => ackFor(p), {}, { baseDelayMs: 1000, maxDelayMs: 8000, now });
     up.paused = true;

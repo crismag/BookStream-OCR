@@ -45,9 +45,13 @@ Effective text of a region = latest correction, else latest OCR result.
 4. Same id + same checksum → `200` replay with the same ack (covers lost responses). Same id + different checksum → `409`. Replacement only via `/api/captures/{id}/replace` with `confirm_replace=1` (old file kept).
 5. Client deletes its copy only when `status=confirmed`, id and checksum match.
 
+## Capture pipeline (v2)
+
+`Camera (preview frame or still) → shutter free → Worker: crop/resize/encode/SHA-256 → IndexedDB (meta + blob stores) → upload queue (2 parallel, adaptive) → PHP: validate, fsync, commit, auto-enqueue OCR → OCR worker (any browser tab, heartbeat) → regions' text → exports`.
+
 ## OCR flow
 
-`POST /api/books/{id}/ocr/enqueue` → jobs. A worker `POST /api/ocr/lease` (5-min lease) gets regions + `image_url`, crops each region, grayscale + contrast stretch (on a copy), Tesseract PSM 6 (single block, line breaks kept), dictionaries off for languages without their own model, and posts `complete` (or `fail`; 3 attempts). Parallel pages get an inferred alignment automatically.
+Uploads enqueue jobs automatically (idempotent; `POST /api/books/{id}/ocr/enqueue` re-queues pages without text). Workers identify themselves (`worker_id`, label) on lease/ping; `/ocr/status` reports active workers. A worker `POST /api/ocr/lease` (5-min lease) gets regions + `image_url`, crops each region, grayscale + contrast stretch (on a copy), Tesseract PSM 6 (single block, line breaks kept), dictionaries off for languages without their own model, and posts `complete` (or `fail`; 3 attempts). Parallel pages get an inferred alignment automatically.
 
 ## Frontend (`web/`)
 
