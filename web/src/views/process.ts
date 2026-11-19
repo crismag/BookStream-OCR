@@ -44,8 +44,8 @@ export async function processView(root: HTMLElement): Promise<() => void> {
         const job = await processOne(bookSel.value || null, (s) => { status.textContent = s; addLog(s); }, () => stopRequested);
         if (job) { done++; idleRounds = 0; void refreshCounts(); continue; }
         idleRounds++;
-        status.textContent = `No queued pages. Checking again in ${Math.min(30, 5 * idleRounds)}s… (${done} processed this session)`;
-        await sleep(Math.min(30000, 5000 * idleRounds), () => stopRequested);
+        status.textContent = `No queued pages. Checking again in ${Math.min(15, 5 * idleRounds)}s… (${done} processed this session)`;
+        await sleep(Math.min(15000, 5000 * idleRounds), () => stopRequested);
       } catch (e) {
         addLog(`Error: ${(e as Error).message}`);
         await sleep(10000, () => stopRequested);
@@ -64,7 +64,7 @@ export async function processView(root: HTMLElement): Promise<() => void> {
   mount(root,
     h('header', { class: 'pagehead' }, h('h1', null, 'Process OCR')),
     h('section', { class: 'card' },
-      h('p', null, 'This tab runs OCR (Tesseract, fully in-browser, no cloud service) on pages queued from the Pages screen. Results are saved per region; nothing is marked reviewed automatically.'),
+      h('p', null, 'Every uploaded page is queued for OCR automatically. Keep this tab open (a laptop is best) and it reads queued pages with Tesseract, entirely in the browser — no cloud service. The scanner shows “worker active” while this runs. Raw OCR is saved per region; nothing is marked reviewed automatically.'),
       isPhone ? h('p', { class: 'warn' }, '! On a phone this uses a lot of battery and slows the camera. Prefer running it on a laptop while you scan.') : null,
       h('label', null, 'Book', bookSel),
       h('div', { class: 'actions' },
@@ -76,7 +76,7 @@ export async function processView(root: HTMLElement): Promise<() => void> {
             toast(`${r.enqueued} page(s) queued`, 'ok');
             void refreshCounts();
           },
-        }, 'Queue unprocessed pages')),
+        }, 'Queue pages without text')),
       counts, status),
     h('section', { class: 'card' }, h('h2', null, 'Log'), log));
   void refreshCounts();

@@ -1,4 +1,4 @@
-"""Auto-crop e2e: fake camera shows a rotated page on a dark desk.
+"""Auto-crop + guide-crop e2e: fake camera shows a rotated page on a dark desk.
 Usage: python3 e2e/crop_check.py <base> /tmp/bs-e2e/tabletop.y4m <user> <password>
 Assumes the account and at least one book exist (run smoke.py first)."""
 import sys
@@ -19,35 +19,46 @@ with sync_playwright() as p:
     page.goto(base + '/')
     page.fill('input[name=username]', user); page.fill('input[name=password]', pw); page.click('button[type=submit]')
     page.wait_for_selector('text=Resume scanning')
-    page.click('text=Resume scanning')
-    page.wait_for_function("document.querySelector('.detecthint') && document.querySelector('.detecthint').textContent.includes('found')", timeout=20000)
-    check('live outline detects page edges', True, page.inner_text('.detecthint'))
-    check('quality preset shown', 'Balanced' in page.inner_text('body'))
-    page.click('.shutter')
-    page.wait_for_function("document.querySelector('.lastinfo').textContent.length > 0", timeout=20000)
-    info = page.inner_text('.lastinfo')
-    check('capture was cropped', 'cropped' in info, info)
+    page.evaluate("() => { localStorage.setItem('bs2.minimal', '0'); localStorage.setItem('bs2.crop', 'auto'); localStorage.setItem('bs2.preset', 'balanced'); }")
+    page.locator('text=Resume scanning').first.click()
+    page.wait_for_function("document.querySelector('.hint') && document.querySelector('.hint').textContent.includes('page edges found')", timeout=20000)
+    check('Enhanced: live outline detects page edges (worker)', True, page.inner_text('.hint'))
+    def capture_info():
+        before = page.inner_text('.lastind')
+        page.click('.shutter')
+        page.wait_for_function(f"document.querySelector('.lastind').textContent.length > 0 && document.querySelector('.lastind').textContent !== {before!r}", timeout=20000)
+        return page.inner_text('.lastind')
+    info = capture_info()
+    check('auto crop applied', 'cropped (auto)' in info, info)
     w, h = [int(x) for x in info.split(' ')[0].split('×')]
-    check('cropped size < full frame and page-shaped', w < 1800 and 1.2 < w / h < 1.45, f'{w}x{h}')
-    page.wait_for_function("document.querySelector('.queuestat').textContent.includes('All uploaded')", timeout=30000)
-    # toggle upload-later and back
-    page.click('text=☁ Uploading'); page.wait_for_selector('text=⏸ Upload later')
-    page.click('.shutter'); page.wait_for_timeout(2500)
-    check('upload later keeps photo on phone', '1 pending' in page.inner_text('.queuestat'), page.inner_text('.queuestat'))
-    page.click('text=⏸ Upload later')
-    page.wait_for_function("document.querySelector('.queuestat').textContent.includes('All uploaded')", timeout=30000)
-    check('switching back uploads it', True)
-    # OCR the cropped page
+    check('cropped to page shape, smaller than frame', w < 1800 and 1.2 < w / h < 1.45, f'{w}x{h}')
+    # Guide crop: switch crop chip until it says guide
+    while 'guide' not in page.inner_text('.chips'):
+        page.click('.chips button:nth-child(2)')
+    info = capture_info()
+    check('guide crop applied', 'cropped (guide)' in info, info)
+    # Minimal mode: auto crop unavailable, falls back to guide; no detection
+    page.click('text=◉ Enhanced')
+    check('Minimal mode shown', 'Minimal' in page.inner_text('.chips'))
+    page.wait_for_function("document.querySelector('.statusbar').textContent.includes('all uploaded')", timeout=30000)
     book = page.evaluate("sessionStorage.getItem('bs.currentBook')")
     pages = page.evaluate(f"fetch('/api/books/{book}/pages').then(r => r.json())")['pages']
-    pid = pages[-2]['id']
+    pid = pages[-2]['id']  # the auto-cropped capture
     page.goto(f'{base}/#/pages/{pid}/review')
     page.wait_for_selector('text=OCR this page now')
     page.click('text=OCR this page now')
     page.wait_for_function("[...document.querySelectorAll('.rcard textarea')].some(t => t.value.includes('Bembaran'))", timeout=120000)
     texts = page.eval_on_selector_all('.rcard textarea', 'els => els.map(e => e.value)')
-    check('OCR on cropped+straightened page', 'datu' in texts[0] and 'chieftains' in texts[1], repr(texts[0][:60]))
-    page.screenshot(path='/tmp/bs-e2e/review-crop.png', full_page=False)
+    check('OCR on cropped+straightened page keeps both columns apart', 'datu' in texts[0] and 'chieftains' in texts[1] and 'chieftains' not in texts[0], repr(texts[0][:50]))
+    # manual crop correction
+    page.click('text=Page tools')
+    page.click('text=✂ Adjust crop')
+    page.wait_for_selector('.cropbox')
+    page.click('text=Save crop')
+    page.on('dialog', lambda d: d.dismiss())
+    page.wait_for_timeout(800)
+    crop = page.evaluate(f"fetch('/api/pages/{pid}').then(r => r.json()).then(d => d.page.crop_region)")
+    check('manual crop correction saved (non-destructive)', crop is not None and crop['w'] > 0.5, str(crop))
     page.goto(f'{base}/#/books/{book}/scan'); page.wait_for_timeout(1500)
     page.screenshot(path='/tmp/bs-e2e/scan-crop.png')
     check('no JS errors', not errs, '; '.join(errs[:2]))

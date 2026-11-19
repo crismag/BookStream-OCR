@@ -59,7 +59,7 @@ async function render(): Promise<void> {
   try {
     const a = auth ?? (await refreshAuth());
     if (!a.authenticated) {
-      mount(app, loginView(async () => { await refreshAuth(); void render(); }));
+      mount(app, loginView(async () => { await refreshAuth(); uploader.start(); void render(); }));
       return;
     }
     for (const [re, view] of routes) {
@@ -83,7 +83,7 @@ async function render(): Promise<void> {
 }
 
 window.addEventListener('hashchange', () => void render());
-window.addEventListener('online', () => { uploader.kick(); toast('Back online — resuming uploads', 'ok'); void render(); });
+window.addEventListener('online', () => { uploader.kick(); toast('Back online — resuming uploads', 'ok'); });
 window.addEventListener('offline', () => toast('Offline — captures are kept on this phone until upload', 'error'));
 onQueueChange(() => {
   const net = document.getElementById('net');
@@ -94,9 +94,10 @@ applyTheme();
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 void (async () => {
   await queue.recoverInterrupted();
-  uploader.start();
   if (navigator.storage?.persist) void navigator.storage.persist();
   await render();
+  // Uploads need the session's CSRF token, which render() → refreshAuth() loads.
+  if (auth?.authenticated) uploader.start();
 })();
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {

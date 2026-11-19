@@ -23,6 +23,10 @@ setup → create book → 3 captures → all confirmed → reload/resume numberi
 
 Fake camera shows the page rotated 5° on a dark desk: live outline detected, capture cropped and straightened, upload-later keeps the photo on the phone, switching back uploads it, OCR of the straightened page still reads both languages.
 
+## Benchmark + resilience (`e2e/bench.py`)
+
+Per preset (10 and 30 pages): shutter-ready time, capture→saved-locally time, upload and server time, saved size, JS heap; weak network (200 kbit/s up), offline capture, reload during uploads, background/foreground, Minimal mode disables detection, Enhanced detection ≈2/s. Results: `docs/benchmarks/`.
+
 ## Not automatable here (manual, on the S24)
 
 - Real rear camera: autofocus, torch, full-resolution `takePhoto`, rotation, permission recovery.

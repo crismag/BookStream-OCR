@@ -24,6 +24,7 @@ final class CaptureController
      */
     public function upload(Request $req, string $bookId): Response
     {
+        $t0 = hrtime(true);
         $u = $this->app->auth->requireUser();
         $book = $this->app->book($bookId);
         $this->app->rate->hit('upload:' . $u['id'], $this->app->config->int('UPLOADS_PER_MINUTE', 120), 60);
@@ -101,7 +102,8 @@ final class CaptureController
                         [$pageId, $book['id'], $captureId, $side, $num, $index * 10 + $i, 'stored', 'not_processed', 'not_reviewed', $now, $now]
                     );
                     PageController::createPresetRegions($this->app, $pageId, (string)$book['default_layout'], $book);
-                    $out[] = ['id' => $pageId, 'side' => $side, 'printed_page_number' => $num];
+                    $queued = $this->app->config->bool('AUTO_OCR', true) && OcrController::enqueuePage($this->app, (string)$book['id'], $pageId);
+                    $out[] = ['id' => $pageId, 'side' => $side, 'printed_page_number' => $num, 'ocr_status' => $queued ? 'queued' : 'not_processed'];
                 }
                 $this->app->db->run('UPDATE books SET updated_at = ? WHERE id = ?', [$now, $book['id']]);
                 return $out;
@@ -110,6 +112,10 @@ final class CaptureController
             @unlink($this->app->storage->path($key));
             throw $e;
         }
+        $serverMs = (int)round((hrtime(true) - $t0) / 1e6);
+        $metrics = (string)($req->post['client_metrics'] ?? '');
+        $metrics = (strlen($metrics) <= 2000 && is_array(json_decode($metrics, true))) ? $metrics : null;
+        $this->app->db->run('UPDATE captures SET server_ms = ?, client_metrics = ? WHERE id = ?', [$serverMs, $metrics, $captureId]);
 
         return Response::json([
             'status' => 'confirmed',
@@ -118,6 +124,7 @@ final class CaptureController
             'checksum' => $checksum,
             'capture_index' => $index,
             'pages' => $pages,
+            'server_ms' => $serverMs,
         ], 201);
     }
 
@@ -130,7 +137,7 @@ final class CaptureController
         if (!hash_equals((string)$existing['checksum'], $checksum)) {
             throw new HttpError(409, 'capture_conflict', 'A different image is already stored under this capture id. Use explicit replacement.');
         }
-        $pages = $this->app->db->all('SELECT id, side, printed_page_number FROM pages WHERE capture_id = ? ORDER BY sort_key', [$existing['id']]);
+        $pages = $this->app->db->all('SELECT id, side, printed_page_number, ocr_status FROM pages WHERE capture_id = ? ORDER BY sort_key', [$existing['id']]);
         return Response::json([
             'status' => 'confirmed',
             'idempotent_replay' => true,
@@ -177,6 +184,9 @@ final class CaptureController
             foreach ($this->app->db->all('SELECT id FROM pages WHERE capture_id = ?', [$captureId]) as $p) {
                 $this->app->db->run("UPDATE pages SET ocr_status = 'not_processed', review_status = 'not_reviewed', updated_at = ? WHERE id = ?", [$now, $p['id']]);
                 $this->app->storage->clearPageCache($bookId, (string)$p['id']);
+                if ($this->app->config->bool('AUTO_OCR', true)) {
+                    OcrController::enqueuePage($this->app, $bookId, (string)$p['id']);
+                }
             }
         });
         return Response::json(['status' => 'confirmed', 'capture_id' => $captureId, 'checksum' => $checksum, 'replaced' => true]);

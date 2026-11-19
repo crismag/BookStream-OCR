@@ -26,8 +26,8 @@ final class OcrExportTest extends TestCase
     public function testFullOcrLifecycleAndParallelExports(): void
     {
         $this->upload($this->book['id'], 1, null, null, 'single', '12');
-        $enq = $this->data($this->call('POST', "/api/books/{$this->book['id']}/ocr/enqueue", []));
-        self::assertSame(1, $enq['enqueued']);
+        // upload already queued the page automatically
+        self::assertSame('queued', $this->db->one('SELECT ocr_status FROM pages')['ocr_status']);
         // enqueue again: no duplicates
         self::assertSame(0, $this->data($this->call('POST', "/api/books/{$this->book['id']}/ocr/enqueue", []))['enqueued']);
 

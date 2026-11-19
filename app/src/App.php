@@ -74,6 +74,8 @@ final class App
         $this->add('POST', "/api/books/$id/ocr/enqueue", [$o, 'enqueue'], 'user');
         $this->add('GET', "/api/books/$id/ocr/status", [$o, 'status'], 'user');
         $this->add('POST', '/api/ocr/lease', [$o, 'lease'], 'worker');
+        $this->add('POST', '/api/ocr/ping', [$o, 'ping'], 'worker');
+        $this->add('GET', "/api/books/$id/metrics", [new Controller\MetricsController($this), 'book'], 'user');
         $this->add('POST', "/api/ocr/jobs/$id/complete", [$o, 'complete'], 'worker');
         $this->add('POST', "/api/ocr/jobs/$id/fail", [$o, 'fail'], 'worker');
 

@@ -72,6 +72,20 @@ export async function pagesView(root: HTMLElement, bookId: string): Promise<() =
         }, '#')));
 
     const toOcr = pages.filter((p) => p.ocr_status === 'not_processed' || p.ocr_status === 'failed').length;
+    let ocrBox: HTMLElement | null = null;
+    try {
+      const o = await api<{ queued: number; leased: number; done: number; failed: number; worker_active: boolean; workers: { label: string; busy: boolean }[]; oldest_queued_seconds: number | null }>('GET', `/api/books/${bookId}/ocr/status`);
+      const waiting = o.queued + o.leased;
+      ocrBox = h('section', { class: `card ${waiting && !o.worker_active ? 'warnbox' : ''}` },
+        h('h2', null, 'OCR'),
+        h('p', null, `${o.done} pages with text · ${o.queued} queued · ${o.leased} processing now · ${o.failed} failed`),
+        o.worker_active
+          ? h('p', null, '⟳ Worker active: ', o.workers.map((w) => `${w.label}${w.busy ? ' (busy)' : ' (idle)'}`).join(', '))
+          : waiting
+            ? h('p', { class: 'warn' }, `⚠ No OCR worker is running — ${o.queued} page(s) are waiting${o.oldest_queued_seconds != null ? ` (oldest ${Math.round(o.oldest_queued_seconds / 60)} min)` : ''}. Text appears only while a worker runs.`)
+            : h('p', { class: 'muted' }, 'Nothing waiting.'),
+        waiting && !o.worker_active ? h('button', { class: 'primary', onclick: () => go('/process') }, '▶ Run OCR in this browser') : null);
+    } catch { /* offline */ }
     mount(root,
       h('header', { class: 'pagehead' },
         h('h1', null, book.title),
@@ -83,10 +97,11 @@ export async function pagesView(root: HTMLElement, bookId: string): Promise<() =
               toast(`${r.enqueued} page(s) queued for OCR. Open Process on a laptop to run them.`, 'ok');
               void render();
             },
-          }, `⚙ Queue OCR (${toOcr})`),
+          }, `⚙ Queue OCR for ${toOcr} page(s) without text`),
           h('button', { onclick: () => go('/process') }, 'Process now'),
           pages.find((p) => p.review_status !== 'reviewed') ? h('button', { onclick: () => go(`/pages/${pages.find((p) => p.review_status !== 'reviewed')!.id}/review`) }, '✎ Review next') : null)),
       pendingBox,
+      ocrBox,
       h('section', { class: 'card integrity' },
         h('h2', null, 'Integrity'),
         h('p', null, `${pages.length} pages stored${book.expected_page_count ? ` of ${book.expected_page_count} expected` : ''} · ${integrity.numbered} numbered · ${integrity.unnumbered} unnumbered`),
